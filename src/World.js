@@ -5,7 +5,8 @@ export class World {
     constructor(scene) {
         this.scene = scene;
         this.tiles = [];
-        this.currentRow = 0;
+        this.tileMap = new Map(); // Optimization for checking ground
+        this.goalZ = -1000;
 
         // Setup Materials
         const loader = new THREE.TextureLoader();
@@ -18,152 +19,119 @@ export class World {
             color: COLORS.tile
         });
 
-        // Use InstancedMesh for performance
-        this.maxTiles = VIEW_DISTANCE * 4 * 4; // 4 sides, approx 4 tiles wide
         this.geometry = new THREE.BoxGeometry(TILE_SIZE, 0.5, TILE_SIZE);
 
         // Container for rotating the world
         this.meshContainer = new THREE.Group();
         this.scene.add(this.meshContainer);
-
-        // Initial Generation
-        this.activeTiles = [];
     }
 
-    reset() {
+    generateLevel(level) {
         // Clear existing tiles
         while(this.meshContainer.children.length > 0){ 
             this.meshContainer.remove(this.meshContainer.children[0]); 
         }
-        this.activeTiles = [];
-        this.currentRow = 0;
+        this.tileMap.clear();
 
-        // Generate initial safe zone
-        for (let i = 0; i < 10; i++) {
-            this.generateRow(i, true);
+        // Level Parameters
+        const length = 40 + (level * 20); // Longer levels
+        // Cap difficulty eventually
+        const effectiveLevel = Math.min(level, 10);
+        const gapBase = Math.min(0.05 + (effectiveLevel * 0.05), 0.5); 
+        
+        this.goalZ = -(length * TILE_SIZE);
+
+        // Logic for forced rotation patterns (snake)
+        let safeSide = 0; 
+        let safeSideDuration = 10;
+
+        for (let i = 0; i <= length; i++) {
+            
+            // Pattern logic: Change the "Safe Path" every few rows
+            if (i > 5 && i < length - 8) {
+                if (safeSideDuration <= 0) {
+                    if (Math.random() < 0.2 + (effectiveLevel * 0.05)) {
+                        // Switch side (Left or Right)
+                        const turn = Math.random() > 0.5 ? 1 : -1;
+                        safeSide = (safeSide + turn + 4) % 4;
+                        safeSideDuration = Math.max(3, 12 - effectiveLevel); 
+                    }
+                } else {
+                    safeSideDuration--;
+                }
+            }
+
+            const isStart = i < 5;
+            const isEnd = i > length - 5;
+            
+            this.generateRow(i, isStart || isEnd, gapBase, safeSide);
         }
-        // Generate rest
-        for (let i = 10; i < VIEW_DISTANCE; i++) {
-            this.generateRow(i, false);
-        }
+
+        // Add Goal
+        const goalGeo = new THREE.TorusGeometry(6, 0.5, 16, 32);
+        const goalMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+        const goalMesh = new THREE.Mesh(goalGeo, goalMat);
+        goalMesh.position.z = this.goalZ;
+        this.meshContainer.add(goalMesh);
     }
 
-    generateRow(rowIndex, safe) {
-        const tunnelWidth = 3; // How many tiles wide is one wall
+    generateRow(rowIndex, safe, gapBase, safeSide) {
+        const tunnelWidth = 3; 
         const offset = (tunnelWidth * TILE_SIZE) / 2 - (TILE_SIZE / 2);
 
-        // 0: Floor, 1: Right Wall, 2: Ceiling, 3: Left Wall
         for (let side = 0; side < 4; side++) {
-
-            // Difficulty scaling
-            let gapChance = safe ? 0 : Math.min(0.1 + (rowIndex * 0.002), 0.6);
-
             for (let x = 0; x < tunnelWidth; x++) {
-                if (Math.random() > gapChance) {
+                
+                let isSolid = false;
+
+                if (safe) {
+                    isSolid = true;
+                } else {
+                    if (side === safeSide) {
+                        // Safe side is mostly solid, but can have small holes later
+                        // Ensure the MIDDLE path is always solid on safe side for playability
+                        if (x === 1) isSolid = true; 
+                        else isSolid = Math.random() > 0.2; 
+                    } else {
+                        // Other sides have high gap chance
+                        isSolid = Math.random() > (gapBase + 0.3); // much harder to traverse off-path
+                    }
+                }
+
+                if (isSolid) {
                     const mesh = new THREE.Mesh(this.geometry, this.material);
-
-                    // Logic to position tile based on side
-                    // We construct a square tunnel centered at 0,0,Z
-
                     const dist = (tunnelWidth * TILE_SIZE) / 2;
-
-                    // Local position on the face
+                    
                     const lateralPos = (x * TILE_SIZE) - offset;
                     const forwardPos = -rowIndex * TILE_SIZE;
 
-                    mesh.position.set(0,0,0);
-
-                    // Rotate and translate based on side
+                    mesh.position.set(lateralPos, -dist, forwardPos);
+                    
+                    // We group it to rotate it easily
                     const group = new THREE.Group();
                     group.add(mesh);
-
-                    // Shift mesh to be "flat" on the ground first
-                    mesh.position.z = forwardPos;
-                    mesh.position.x = lateralPos;
-                    mesh.position.y = -dist; // Push down to floor level
-
-                    // Rotate the GROUP to place it on the correct wall
                     group.rotation.z = side * (Math.PI / 2);
-
+                    
+                    // Optimization: We could apply rotation to position/quaternion directly
+                    // but Group is easier for the "Tunnel" mental model
                     this.meshContainer.add(group);
 
-                    this.activeTiles.push({
-                        mesh: group, // The group handles the rotation
-                        row: rowIndex,
-                        side: side,
-                        tileX: x,
-                        type: 'solid'
-                    });
-                } else {
-                     // Just store emptiness for logic
-                     this.activeTiles.push({
-                        mesh: null,
-                        row: rowIndex,
-                        side: side,
-                        tileX: x,
-                        type: 'gap'
-                    });
+                    // Map entry
+                    const key = `${rowIndex},${side},${x}`;
+                    this.tileMap.set(key, true);
                 }
             }
         }
     }
 
     update(playerZ) {
-        // Calculate current row based on player position
-        // Player moves into negative Z
-        const targetRow = Math.floor(Math.abs(playerZ) / TILE_SIZE);
-
-        if (targetRow + VIEW_DISTANCE > this.currentRow) {
-            this.currentRow++;
-            this.generateRow(this.currentRow - 1 + VIEW_DISTANCE, false);
-            this.cleanupOldTiles(targetRow);
-        }
+        // No procedural generation needed per frame
     }
 
-    cleanupOldTiles(playerRow) {
-        // Remove tiles behind the player
-        const removeThreshold = playerRow - 5;
-        this.activeTiles = this.activeTiles.filter(t => {
-            if (t.row < removeThreshold) {
-                if (t.mesh) {
-                    this.meshContainer.remove(t.mesh);
-                    // Dispose geometry/material if we weren't reusing them globally
-                }
-                return false;
-            }
-            return true;
-        });
-    }
-
-    // Collision Detection Helper
     checkGround(z, side, xOffset) {
-        // Map world coords to tile grid
-        const tunnelWidth = 3;
-        const totalWidth = tunnelWidth * TILE_SIZE;
-
-        // xOffset is relative to center of that side. 
-        // e.g. -6 to +6. Shift to 0..12
-        const relativeX = xOffset + (totalWidth / 2);
-        const tileIndex = Math.floor(relativeX / TILE_SIZE);
-
-        const row = Math.floor(Math.abs(z) / TILE_SIZE); // Z is negative usually, check logic?
-        // Z is player position (e.g. -10). Row 0 is 0..-4. Row 1 is -4..-8.
-        // Actually: Row index = floor(abs(z) / 4) IF we start at 0.
-        // Let's refine rounding.
-        const rowExact = Math.abs(z) / TILE_SIZE; 
-        const rowIndex = Math.round(rowExact); // Snap to nearest row center? 
-        // Tiles are placed at -rowIndex * TILE_SIZE.
-        // If tile is at -4, it covers -2 to -6. 
-
-        const r = Math.round(Math.abs(z) / TILE_SIZE);
-
-        // Find tile
-        const tile = this.activeTiles.find(t => 
-            t.row === r && 
-            t.side === side && 
-            t.tileX === tileIndex
-        );
-
-        return tile ? tile.type === 'solid' : false;
+        const row = Math.round(Math.abs(z) / TILE_SIZE);
+        const tileIndex = Math.round((xOffset + TILE_SIZE) / TILE_SIZE);
+        const key = `${row},${side},${tileIndex}`;
+        return this.tileMap.has(key);
     }
 }

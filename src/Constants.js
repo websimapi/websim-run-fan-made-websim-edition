@@ -1,6 +1,6 @@
 export const TILE_SIZE = 4;
 export const TUNNEL_RADIUS = 7; // Distance from center to wall
-export const VIEW_DISTANCE = 30; // How many tile rows ahead we generate
+export const VIEW_DISTANCE = 60; // Increased for seeing further in static levels
 export const PLAYER_SPEED = 0.20; // Slightly slower to help with control and physics
 export const JUMP_FORCE = 0.45;
 export const GRAVITY = 0.022;

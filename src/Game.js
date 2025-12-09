@@ -42,6 +42,8 @@ export class Game {
 
         this.isRunning = false;
         this.scoreDisplay = document.getElementById('score-display');
+        this.levelDisplay = document.getElementById('level-display');
+        this.level = 1;
     }
 
     async loadAudio() {
@@ -112,8 +114,8 @@ export class Game {
 
     start() {
         if (this.isRunning) return;
-        this.world.reset();
-        this.player.reset();
+        
+        this.loadLevel(this.level);
         this.isRunning = true;
 
         // Start Ambience
@@ -121,6 +123,14 @@ export class Game {
         this.ambientSource = this.playSound('ambient', true);
 
         this.animate();
+    }
+
+    loadLevel(n) {
+        this.level = n;
+        this.levelDisplay.textContent = `LEVEL ${this.level}`;
+        this.world.generateLevel(this.level);
+        this.player.reset();
+        this.world.meshContainer.rotation.z = 0;
     }
 
     onWindowResize() {
@@ -152,8 +162,11 @@ export class Game {
             return;
         }
 
-        // Generate World
-        this.world.update(this.player.position.z);
+        // Check Win
+        if (this.player.position.z < this.world.goalZ + 2) {
+            this.levelComplete();
+            return;
+        }
 
         // UI Update
         const dist = Math.floor(Math.abs(this.player.position.z));
@@ -162,10 +175,33 @@ export class Game {
         this.renderer.render(this.scene, this.camera);
     }
 
+    levelComplete() {
+        this.isRunning = false;
+        this.level++;
+        
+        const overlay = document.getElementById('title-overlay');
+        const btn = document.getElementById('start-btn');
+        const title = overlay.querySelector('h1');
+        const sub = overlay.querySelector('p');
+        
+        title.textContent = "LEVEL COMPLETE";
+        sub.textContent = `GET READY FOR LEVEL ${this.level}`;
+        btn.textContent = "NEXT LEVEL";
+        overlay.style.display = 'block';
+    }
+
     gameOver() {
         this.isRunning = false;
         if (this.ambientSource) this.ambientSource.stop();
-        document.getElementById('title-overlay').style.display = 'block';
-        document.getElementById('start-btn').textContent = "TRY AGAIN";
+        
+        const overlay = document.getElementById('title-overlay');
+        const btn = document.getElementById('start-btn');
+        const title = overlay.querySelector('h1');
+        const sub = overlay.querySelector('p');
+        
+        title.textContent = "FALLEN";
+        sub.textContent = "TRY AGAIN";
+        btn.textContent = "RESTART LEVEL";
+        overlay.style.display = 'block';
     }
 }
