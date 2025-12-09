@@ -91,7 +91,6 @@ export class Player {
         this.velocity.set(0, 0, -PLAYER_SPEED);
         this.currentSide = 0;
         this.targetWorldRotation = 0;
-        this.currentWorldRotation = 0;
         this.isDead = false;
         this.onGround = false;
         this.runTime = 0;
@@ -102,7 +101,7 @@ export class Player {
         this.input.jump = jumpPressed;
     }
 
-    update(worldObj, dt) {
+    update(worldObj, currentWorldRotation) {
         if (this.isDead) return;
 
         // 1. Forward Movement (Constant)
@@ -179,25 +178,49 @@ export class Player {
         // Animation
         this.animateBody();
 
-        // Update Mesh Position
-        this.mesh.position.copy(this.position);
+        // Update Mesh Position (Visual Smoothing)
+        // Convert the logical physics position (which snaps) into a visual world position 
+        // that respects the current smooth rotation of the tunnel.
         
-        // Tilt mesh based on movement
+        // 1. Calculate Player Position in "Tunnel Local Space" (Unrotated)
+        // This effectively maps the current side's 2D surface coordinates back to the 3D tube surface
+        const sideAngle = this.currentSide * (Math.PI / 2);
+        const cos = Math.cos(sideAngle);
+        const sin = Math.sin(sideAngle);
+        
+        // Transform canonical physics coordinates to tunnel-local coordinates
+        // Logic: Rotate the vector (x, y) by sideAngle.
+        // position.x is lateral offset on current surface.
+        // position.y is vertical offset from tunnel center (radius).
+        const localX = this.position.x * cos - this.position.y * sin;
+        const localY = this.position.x * sin + this.position.y * cos;
+
+        // 2. Apply the current smooth World Rotation to get visual World Coordinates
+        // The world mesh is rotated by 'currentWorldRotation', so the player must orbit with it.
+        const wCos = Math.cos(currentWorldRotation);
+        const wSin = Math.sin(currentWorldRotation);
+
+        const visualX = localX * wCos - localY * wSin;
+        const visualY = localX * wSin + localY * wCos;
+
+        this.mesh.position.set(visualX, visualY, this.position.z);
+        
+        // Rotate the character container so it stands upright on the current surface surface
+        // The character's "up" is determined by the side + the current world rotation
+        this.mesh.rotation.z = sideAngle + currentWorldRotation; 
+        
+        // Tilt mesh based on movement (banking)
         this.charGroup.rotation.z = -this.input.x * 0.5; // Lean into turn
         this.charGroup.rotation.y = Math.PI; // Face forward (camera looks at back)
 
         // Update Camera Follow
         const camTargetPos = new THREE.Vector3(
-            this.position.x * 0.5, // Slight lag on X for feel
-            this.position.y + 3, 
-            this.position.z + 8
+            this.mesh.position.x * 0.5, 
+            this.mesh.position.y + 3, 
+            this.mesh.position.z + 8
         );
         this.camera.position.lerp(camTargetPos, 0.1);
-        this.camera.lookAt(this.position.x, this.position.y, this.position.z - 5);
-
-        // Smoothly rotate the WORLD container
-        // Note: The world container is passed from Game logic usually, or accessed via global.
-        // Here we return the rotation delta needed.
+        this.camera.lookAt(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z - 5);
     }
 
     changeSide(dir) {

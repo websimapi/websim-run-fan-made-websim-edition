@@ -133,9 +133,18 @@ export class Game {
         if (!this.isRunning) return;
         requestAnimationFrame(() => this.animate());
 
+        // Smooth World Rotation
+        // We rotate the container holding the level geometry
+        // The player stays upright, the world spins to match the current 'gravity'
+        const currentRot = this.world.meshContainer.rotation.z;
+        const targetRot = this.player.targetWorldRotation;
+
+        // Lerp rotation
+        this.world.meshContainer.rotation.z += (targetRot - currentRot) * 0.1;
+
         // Update Physics
         this.player.handleInput(this.input, this.jumpPressed);
-        const event = this.player.update(this.world);
+        const event = this.player.update(this.world, this.world.meshContainer.rotation.z);
 
         if (event === 'jump') this.playSound('jump');
         if (event === 'dead') {
@@ -145,15 +154,6 @@ export class Game {
 
         // Generate World
         this.world.update(this.player.position.z);
-
-        // Smooth World Rotation
-        // We rotate the container holding the level geometry
-        // The player stays upright, the world spins to match the current 'gravity'
-        const currentRot = this.world.meshContainer.rotation.z;
-        const targetRot = this.player.targetWorldRotation;
-
-        // Lerp rotation
-        this.world.meshContainer.rotation.z += (targetRot - currentRot) * 0.1;
 
         // UI Update
         const dist = Math.floor(Math.abs(this.player.position.z));
