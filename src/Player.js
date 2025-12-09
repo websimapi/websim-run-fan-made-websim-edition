@@ -11,7 +11,7 @@ export class Player {
         const map = new THREE.TextureLoader().load('alien.png');
         const material = new THREE.SpriteMaterial({ map: map, color: 0xffffff });
         this.mesh = new THREE.Sprite(material);
-        this.mesh.scale.set(1.5, 2.5, 1);
+        this.mesh.scale.set(1.5, 1.5, 1);
         this.scene.add(this.mesh);
 
         // Physics State

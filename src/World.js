@@ -15,7 +15,7 @@ export class World {
 
         this.material = new THREE.MeshLambertMaterial({ 
             map: tileTexture,
-            color: 0xaaaaaa
+            color: COLORS.tile
         });
 
         // Use InstancedMesh for performance
