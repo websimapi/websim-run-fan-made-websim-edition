@@ -7,12 +7,12 @@ export class Player {
         this.camera = camera;
         this.isMobile = isMobile;
 
-        // Sprite
-        const map = new THREE.TextureLoader().load('alien.png');
-        const material = new THREE.SpriteMaterial({ map: map, color: 0xffffff });
-        this.mesh = new THREE.Sprite(material);
-        this.mesh.scale.set(1.5, 1.5, 1);
+        // Character Container
+        this.mesh = new THREE.Group();
         this.scene.add(this.mesh);
+
+        // Build 3D Character
+        this.buildCharacter();
 
         // Physics State
         this.velocity = new THREE.Vector3(0, 0, -PLAYER_SPEED);
@@ -29,6 +29,63 @@ export class Player {
         this.input = { x: 0, y: 0, jump: false };
     }
 
+    buildCharacter() {
+        const material = new THREE.MeshLambertMaterial({ color: 0xaaaaaa });
+        const blackMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+        this.charGroup = new THREE.Group();
+        this.mesh.add(this.charGroup);
+
+        // Head (Big, plump)
+        const headGeo = new THREE.SphereGeometry(0.35, 16, 16);
+        this.head = new THREE.Mesh(headGeo, material);
+        this.head.position.y = 0.5;
+        this.charGroup.add(this.head);
+
+        // Antennae
+        const antGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.3);
+        const ant1 = new THREE.Mesh(antGeo, material);
+        ant1.position.set(0.15, 0.75, 0);
+        ant1.rotation.z = -0.3;
+        this.charGroup.add(ant1);
+        const ant2 = new THREE.Mesh(antGeo, material);
+        ant2.position.set(-0.15, 0.75, 0);
+        ant2.rotation.z = 0.3;
+        this.charGroup.add(ant2);
+
+        // Eyes
+        const eyeGeo = new THREE.SphereGeometry(0.08, 8, 8);
+        const eyeL = new THREE.Mesh(eyeGeo, blackMat);
+        eyeL.position.set(-0.12, 0.55, 0.25);
+        this.charGroup.add(eyeL);
+        const eyeR = new THREE.Mesh(eyeGeo, blackMat);
+        eyeR.position.set(0.12, 0.55, 0.25);
+        this.charGroup.add(eyeR);
+
+        // Torso
+        const torsoGeo = new THREE.CylinderGeometry(0.15, 0.2, 0.4, 12);
+        this.torso = new THREE.Mesh(torsoGeo, material);
+        this.torso.position.y = 0.1;
+        this.charGroup.add(this.torso);
+
+        // Limbs function
+        const createLimb = (x, y, len) => {
+            const pivot = new THREE.Group();
+            pivot.position.set(x, y, 0);
+            const geo = new THREE.CapsuleGeometry(0.08, len, 4, 8);
+            const limb = new THREE.Mesh(geo, material);
+            limb.position.y = -len / 2;
+            pivot.add(limb);
+            this.charGroup.add(pivot);
+            return pivot;
+        };
+
+        this.armL = createLimb(-0.25, 0.25, 0.35);
+        this.armR = createLimb(0.25, 0.25, 0.35);
+        this.legL = createLimb(-0.15, -0.1, 0.4);
+        this.legR = createLimb(0.15, -0.1, 0.4);
+    }
+
     reset() {
         this.position.set(0, 2, 0);
         this.velocity.set(0, 0, -PLAYER_SPEED);
@@ -37,6 +94,7 @@ export class Player {
         this.currentWorldRotation = 0;
         this.isDead = false;
         this.onGround = false;
+        this.runTime = 0;
     }
 
     handleInput(inputVec, jumpPressed) {
@@ -81,36 +139,52 @@ export class Player {
         }
 
         // 5. Collision with Tiles
-        // We check the tile directly below the player relative to the CURRENT side
         const groundHit = worldObj.checkGround(this.position.z, this.currentSide, this.position.x);
 
-        // Floor level is effectively at y = -tunnelHalfWidth + (playerHeight/2)
-        // Let's say floor is at Y = -5 (example). 
-        // We render tiles at Y = -6 (center 0,0,0, floor is -6)
+        // Calculate floor Y level
+        // Tunnel tiles are at -tunnelHalfWidth - 0.25 (half tile thickness)
+        // Player origin is at feet? No, center of group is 0,0,0. 
+        // Our character head is at +0.5. Legs end around -0.5.
+        // So the mesh origin needs to be ~0.5 above the floor.
+        const floorY = -tunnelHalfWidth + 0.5;
 
-        const floorY = -tunnelHalfWidth + 1.25; // 1.25 is half player height roughly
+        // Collision Logic
+        // Fix: Only snap to floor if we are close enough to it. 
+        // This prevents snapping back up if we fell deep into a hole but drifted over solid ground.
+        const SNAP_THRESHOLD = 0.5; 
 
         if (groundHit) {
-            if (this.position.y <= floorY && this.velocity.y <= 0) {
+            // Check if we are landing or already on ground
+            // We allow snapping if we are slightly below floor (tunneling fix) but not TOO far below (pit fix)
+            if (this.position.y <= floorY + 0.1 && this.position.y >= floorY - SNAP_THRESHOLD && this.velocity.y <= 0) {
                 this.position.y = floorY;
                 this.velocity.y = 0;
                 this.onGround = true;
+            } else {
+                // We are over solid ground, but too deep (or too high?).
+                // If too deep, we crashed into the side of the platform conceptually, or are under it.
+                // We let physics continue (fall).
+                this.onGround = false;
             }
         } else {
             this.onGround = false;
         }
 
         // 6. Death Check
-        if (this.position.y < floorY - 10) {
+        if (this.position.y < floorY - 20) {
             this.isDead = true;
             return 'dead';
         }
 
+        // Animation
+        this.animateBody();
+
         // Update Mesh Position
-        // The mesh visually stays centered X/Y mostly, but we simulate X movement.
-        // Actually, for this style, we move the player Mesh X,Y,Z.
-        // But the Camera follows closely.
         this.mesh.position.copy(this.position);
+        
+        // Tilt mesh based on movement
+        this.charGroup.rotation.z = -this.input.x * 0.5; // Lean into turn
+        this.charGroup.rotation.y = Math.PI; // Face forward (camera looks at back)
 
         // Update Camera Follow
         const camTargetPos = new THREE.Vector3(
@@ -128,27 +202,44 @@ export class Player {
 
     changeSide(dir) {
         // dir: 1 (Right), -1 (Left)
-        // If we go Right, the world rotates -90 deg (CCW) so the Right wall becomes the bottom.
         this.targetWorldRotation -= dir * (Math.PI / 2);
-
-        // Reset Player X to the new relative position
-        // If I hit the right wall (x = +6), I am now on the "Floor" of the new side.
-        // My X becomes relative to the new floor.
-        // Actually, just snapping them creates a jump.
-        // Classic Run: You transition smoothly.
-        // Easy math: Just wrap the coordinate.
 
         const tunnelHalfWidth = (3 * TILE_SIZE) / 2;
 
         if (dir === 1) {
-            this.position.x = -tunnelHalfWidth + 1.0; // Teleport to left side of new floor
+            this.position.x = -tunnelHalfWidth + 1.0; 
             this.currentSide = (this.currentSide + 1) % 4;
         } else {
-            this.position.x = tunnelHalfWidth - 1.0; // Teleport to right side of new floor
-            this.currentSide = (this.currentSide + 3) % 4; // -1 wrap
+            this.position.x = tunnelHalfWidth - 1.0; 
+            this.currentSide = (this.currentSide + 3) % 4;
         }
+    }
 
-        // Adjust Y slightly to prevent clipping during transition
-        // this.position.y = ...
+    animateBody() {
+        if (this.isDead) return;
+
+        // Run cycle
+        if (this.onGround && (Math.abs(this.input.x) > 0.01 || Math.abs(this.velocity.z) > 0.01)) {
+            this.runTime = (this.runTime || 0) + 0.3;
+            
+            const limbAmp = 0.8;
+            this.legL.rotation.x = Math.sin(this.runTime) * limbAmp;
+            this.legR.rotation.x = Math.sin(this.runTime + Math.PI) * limbAmp;
+            
+            this.armL.rotation.x = Math.sin(this.runTime + Math.PI) * limbAmp;
+            this.armR.rotation.x = Math.sin(this.runTime) * limbAmp;
+        } else if (!this.onGround) {
+            // Jump pose
+            this.legL.rotation.x = -0.5;
+            this.legR.rotation.x = 0.2;
+            this.armL.rotation.x = -2.5; // Hands up
+            this.armR.rotation.x = -2.5;
+        } else {
+            // Idle
+            this.legL.rotation.x = 0;
+            this.legR.rotation.x = 0;
+            this.armL.rotation.x = 0;
+            this.armR.rotation.x = 0;
+        }
     }
 }
